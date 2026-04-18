@@ -15,7 +15,9 @@
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0"
   },
-  "dependencies": {},
+  "dependencies": {
+    "fabric": "^7.2.0"
+  },
   "build": {
     "appId": "com.photobook.studio",
     "productName": "PhotoBook Studio",
@@ -23,7 +25,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
