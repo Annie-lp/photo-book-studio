@@ -34,8 +34,24 @@ function createMenu() {
       label: '文件',
       submenu: [
         {
-          label: '导入图片',
+          label: '新建项目',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => mainWindow.webContents.send('menu-new-project')
+        },
+        {
+          label: '保存草稿',
+          accelerator: 'CmdOrCtrl+S',
+          click: () => mainWindow.webContents.send('menu-save-draft')
+        },
+        {
+          label: '加载草稿',
           accelerator: 'CmdOrCtrl+O',
+          click: () => mainWindow.webContents.send('menu-load-draft')
+        },
+        { type: 'separator' },
+        {
+          label: '导入图片',
+          accelerator: 'CmdOrCtrl+Shift+I',
           click: () => mainWindow.webContents.send('menu-import-images')
         },
         {
@@ -74,6 +90,11 @@ function createMenu() {
           label: '删除选中',
           accelerator: 'Delete',
           click: () => mainWindow.webContents.send('menu-delete')
+        },
+        {
+          label: '全选',
+          accelerator: 'CmdOrCtrl+A',
+          click: () => mainWindow.webContents.send('menu-select-all')
         }
       ]
     },
@@ -145,15 +166,11 @@ ipcMain.handle('read-image-as-data-url', async (event, filePath) => {
     const data = fs.readFileSync(filePath);
     const ext = path.extname(filePath).toLowerCase();
     const mimeTypes = {
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.png': 'image/png',
-      '.gif': 'image/gif',
-      '.webp': 'image/webp',
-      '.bmp': 'image/bmp'
+      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+      '.png': 'image/png', '.gif': 'image/gif',
+      '.webp': 'image/webp', '.bmp': 'image/bmp'
     };
-    const mime = mimeTypes[ext] || 'image/png';
-    return `data:${mime};base64,${data.toString('base64')}`;
+    return 'data:' + (mimeTypes[ext] || 'image/png') + ';base64,' + data.toString('base64');
   } catch (e) {
     return null;
   }
@@ -171,8 +188,10 @@ ipcMain.handle('save-file', async (event, { defaultName, filters }) => {
 ipcMain.handle('write-file', async (event, { filePath, data, encoding }) => {
   try {
     if (encoding === 'base64') {
-      const buffer = Buffer.from(data.replace(/^data:[^;]+;base64,/, ''), 'base64');
-      fs.writeFileSync(filePath, buffer);
+      const buf = Buffer.from(data.replace(/^data:[^;]+;base64,/, ''), 'base64');
+      fs.writeFileSync(filePath, buf);
+    } else if (encoding === 'arraybuffer') {
+      fs.writeFileSync(filePath, Buffer.from(data));
     } else {
       fs.writeFileSync(filePath, data);
     }
@@ -182,16 +201,36 @@ ipcMain.handle('write-file', async (event, { filePath, data, encoding }) => {
   }
 });
 
-app.whenReady().then(createWindow);
+// Draft save/load via localStorage (renderer handles persistence)
+// These IPCs are for potential file-based draft export
+ipcMain.handle('save-draft-to-file', async (event, { defaultName }) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: defaultName || 'photobook-draft.json',
+    filters: [{ name: 'PhotoBook Draft', extensions: ['json'] }]
+  });
+  if (result.canceled) return null;
+  return result.filePath;
+});
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
+ipcMain.handle('load-draft-from-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    filters: [{ name: 'PhotoBook Draft', extensions: ['json'] }]
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  try {
+    return fs.readFileSync(result.filePaths[0], 'utf8');
+  } catch (e) {
+    return null;
   }
 });
 
+app.whenReady().then(createWindow);
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
+
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
