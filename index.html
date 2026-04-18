@@ -6,9 +6,17 @@
   <title>PhotoBook Studio</title>
   <link rel="stylesheet" href="src/styles.css">
   <!-- Local library files (bundled with app, no CDN needed) -->
-  <script src="src/lib/fabric.js"></script>
-  <script src="src/lib/jspdf.js"></script>
-  <script src="src/lib/html2canvas.js"></script>
+  <script src="src/lib/fabric.js" onerror="alert('fabric.js load failed!')"></script>
+  <script src="src/lib/jspdf.js" onerror="alert('jspdf.js load failed!')"></script>
+  <script src="src/lib/html2canvas.js" onerror="alert('html2canvas load failed!'); console.error('h2c fail');"></script>
+  <script>
+  window._diag = { fabric: typeof fabric !== "undefined", jspdf: typeof jspdf !== "undefined" };
+  if (!window._diag.fabric) { console.error("fabric.js NOT loaded!", "typeof fabric:", typeof fabric); document.title = "ERR: fabric=" + typeof fabric; }
+  if (!window._diag.jspdf) { console.error("jspdf.js NOT loaded!"); }
+  document.write("<div id="pre-diag" style="position:fixed;top:40px;right:5px;background:#200;z-index:99999;color:#fff;padding:6px 10px;font-size:12px;font-family:monospace;border-radius:4px;">fabric=<b id="pre-fabric"></b> jspdf=<b id="pre-jspdf"></b></div>");
+  document.getElementById("pre-fabric").textContent = typeof fabric;
+  document.getElementById("pre-jspdf").textContent = typeof jspdf;
+  </script>('html2canvas.js load failed!')"></script>
 </head>
 <body>
   <!-- Toolbar -->
