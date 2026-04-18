@@ -267,20 +267,16 @@
     </div>
   </div>
 
-  <!-- Quick Diagnostic Panel -->
-  <div id="diag-panel" style="position:fixed;top:5px;right:5px;background:#1a1a2e;color:#0f0;border:1px solid #333;padding:8px 12px;font-size:11px;font-family:monospace;z-index:9999;border-radius:4px;max-width:300px;">
-    <div style="font-weight:bold;margin-bottom:4px;color:#0ff;">🔍 PhotoBook诊断</div>
-    <div id="diag-msg">检测中...</div>
-  </div>
+  <script src="src/renderer.js"></script>
 
-  <!-- Status Bar -->
-  <div id="status-bar">
-    <span id="status-text">就绪</span>
-    <span id="status-info"></span>
-  </div>
-
+  <!-- Diagnostic Panel (runs after renderer.js is loaded) -->
   <script>
   (function(){
+    var panel = document.createElement('div');
+    panel.id = 'diag-panel';
+    panel.style.cssText = 'position:fixed;top:5px;right:5px;background:#1a1a2e;color:#0f0;border:1px solid #333;padding:8px 12px;font-size:11px;font-family:monospace;z-index:99999;border-radius:4px;max-width:320px;line-height:1.6;';
+    panel.innerHTML = '<div style="font-weight:bold;margin-bottom:4px;color:#0ff;">🔍 PhotoBook诊断</div><div id="diag-msg">检测中...</div>';
+    document.body.appendChild(panel);
     var d = document.getElementById('diag-msg');
     var s = document.getElementById('status-text');
     var parts = [];
@@ -289,18 +285,15 @@
     var zoomOK = !!document.getElementById('zoom-select');
     var importOK = !!document.getElementById('btn-import-images');
     var canvasOK = !!document.getElementById('fabric-canvas');
-    parts.push('fabric:' + (libOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>'));
-    parts.push('api:' + (apiOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>'));
-    parts.push('canvas:' + (canvasOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>'));
-    parts.push('zoom:' + (zoomOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>'));
-    parts.push('import:' + (importOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>'));
+    parts.push('fabric.js: <b>' + (libOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>') + '</b>');
+    parts.push('electronAPI: <b>' + (apiOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>') + '</b>');
+    parts.push('canvas: <b>' + (canvasOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>') + '</b>');
+    parts.push('zoom下拉: <b>' + (zoomOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>') + '</b>');
+    parts.push('import按钮: <b>' + (importOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>') + '</b>');
     d.innerHTML = parts.join('<br>');
     if (s) s.textContent = 'lib='+(libOK?'OK':'ERR')+' api='+(apiOK?'OK':'ERR');
-    if (!libOK || !apiOK) {
-      document.getElementById('diag-panel').style.background = '#3a0000';
-    }
+    if (!libOK || !apiOK) panel.style.background = '#3a0000';
   })();
   </script>
-  <script src="src/renderer.js"></script>
 </body>
 </html>
