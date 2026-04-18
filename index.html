@@ -6,17 +6,9 @@
   <title>PhotoBook Studio</title>
   <link rel="stylesheet" href="src/styles.css">
   <!-- Local library files (bundled with app, no CDN needed) -->
-  <script src="src/lib/fabric.js" onerror="alert('fabric.js load failed!')"></script>
-  <script src="src/lib/jspdf.js" onerror="alert('jspdf.js load failed!')"></script>
-  <script src="src/lib/html2canvas.js" onerror="alert('html2canvas load failed!'); console.error('h2c fail');"></script>
-  <script>
-  window._diag = { fabric: typeof fabric !== "undefined", jspdf: typeof jspdf !== "undefined" };
-  if (!window._diag.fabric) { console.error("fabric.js NOT loaded!", "typeof fabric:", typeof fabric); document.title = "ERR: fabric=" + typeof fabric; }
-  if (!window._diag.jspdf) { console.error("jspdf.js NOT loaded!"); }
-  document.write("<div id="pre-diag" style="position:fixed;top:40px;right:5px;background:#200;z-index:99999;color:#fff;padding:6px 10px;font-size:12px;font-family:monospace;border-radius:4px;">fabric=<b id="pre-fabric"></b> jspdf=<b id="pre-jspdf"></b></div>");
-  document.getElementById("pre-fabric").textContent = typeof fabric;
-  document.getElementById("pre-jspdf").textContent = typeof jspdf;
-  </script>('html2canvas.js load failed!')"></script>
+  <script src="src/lib/fabric.js"></script>
+  <script src="src/lib/jspdf.js"></script>
+  <script src="src/lib/html2canvas.js"></script>
 </head>
 <body>
   <!-- Toolbar -->
@@ -275,40 +267,12 @@
     </div>
   </div>
 
-  
   <!-- Status Bar -->
   <div id="status-bar">
     <span id="status-text">就绪</span>
     <span id="status-info"></span>
   </div>
 
-<script src="src/renderer.js"></script>
-
-  <!-- Diagnostic Panel (runs after renderer.js is loaded) -->
-  <script>
-  (function(){
-    var panel = document.createElement('div');
-    panel.id = 'diag-panel';
-    panel.style.cssText = 'position:fixed;top:5px;right:5px;background:#1a1a2e;color:#0f0;border:1px solid #333;padding:8px 12px;font-size:11px;font-family:monospace;z-index:99999;border-radius:4px;max-width:320px;line-height:1.6;';
-    panel.innerHTML = '<div style="font-weight:bold;margin-bottom:4px;color:#0ff;">🔍 PhotoBook诊断</div><div id="diag-msg">检测中...</div>';
-    document.body.appendChild(panel);
-    var d = document.getElementById('diag-msg');
-    var s = document.getElementById('status-text');
-    var parts = [];
-    var libOK = typeof fabric !== 'undefined';
-    var apiOK = typeof window.electronAPI !== 'undefined';
-    var zoomOK = !!document.getElementById('zoom-select');
-    var importOK = !!document.getElementById('btn-import-images');
-    var canvasOK = !!document.getElementById('fabric-canvas');
-    parts.push('fabric.js: <b>' + (libOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>') + '</b>');
-    parts.push('electronAPI: <b>' + (apiOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>') + '</b>');
-    parts.push('canvas: <b>' + (canvasOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>') + '</b>');
-    parts.push('zoom下拉: <b>' + (zoomOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>') + '</b>');
-    parts.push('import按钮: <b>' + (importOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>') + '</b>');
-    d.innerHTML = parts.join('<br>');
-    if (s) s.textContent = 'lib='+(libOK?'OK':'ERR')+' api='+(apiOK?'OK':'ERR');
-    if (!libOK || !apiOK) panel.style.background = '#3a0000';
-  })();
-  </script>
+  <script src="src/renderer.js"></script>
 </body>
 </html>
