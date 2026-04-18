@@ -1,20 +1,19 @@
 'use strict';
 
 // ============================================
-// PhotoBook Studio - Renderer (Single Canvas)
-// All page objects stored as JSON, rendered on one Fabric.js canvas.
+// PhotoBook Studio - Renderer
+// Single Fabric.js canvas, native rendering, no mirroring.
 // ============================================
 
-const PAGE_SIZES = {
+var PAGE_SIZES = {
   A5: { portrait: { w: 416, h: 595 }, landscape: { w: 595, h: 416 } },
   A4: { portrait: { w: 595, h: 842 }, landscape: { w: 842, h: 595 } },
   square: { portrait: { w: 600, h: 600 }, landscape: { w: 600, h: 600 } }
 };
 
-const state = {
+var state = {
   pages: [],
   currentPageIndex: 0,
-  currentTool: 'select',
   zoom: 1,
   selectedLibraryImage: null,
   history: [],
@@ -22,25 +21,21 @@ const state = {
   imageLibrary: [],
   nextImageId: 1,
   nextObjectId: 1,
+  historyBusy: false,
 };
 
-let fabricCanvas = null;
-let canvasEl, wrapperEl, containerEl;
+var fabricCanvas = null;
 
 // ============================================
-// Initialization
+// INIT
 // ============================================
 
 function init() {
-  canvasEl = document.getElementById('fabric-canvas');
-  wrapperEl = document.getElementById('canvas-wrapper');
-  containerEl = document.getElementById('canvas-container');
+  console.log('[init] fabric type:', typeof fabric);
+  console.log('[init] window.jspdf type:', typeof window.jspdf);
+  console.log('[init] electronAPI type:', typeof window.electronAPI);
 
-  const size = getCurrentPageSize();
-  canvasEl.width = size.w;
-  canvasEl.height = size.h;
-  containerEl.style.width = size.w + 'px';
-  containerEl.style.height = size.h + 'px';
+  var size = getCurrentPageSize();
 
   fabricCanvas = new fabric.Canvas('fabric-canvas', {
     width: size.w,
@@ -50,7 +45,33 @@ function init() {
     selection: true,
   });
 
-  setupCanvasEvents(fabricCanvas);
+  // Zoom: scale the wrapper element
+  fabricCanvas.setZoom = function(z) {
+    var scale = Math.max(0.1, Math.min(4, z));
+    state.zoom = scale;
+    fabricCanvas.setDimensions({
+      width: size.w * scale,
+      height: size.h * scale
+    });
+    fabricCanvas.setZoom(scale);
+    fabricCanvas.renderAll();
+    var wrapper = document.getElementById('canvas-container');
+    if (wrapper) {
+      wrapper.style.width = (size.w * scale) + 'px';
+      wrapper.style.height = (size.h * scale) + 'px';
+    }
+  };
+
+  // Canvas events
+  fabricCanvas.on('selection:created', onSelectionChange);
+  fabricCanvas.on('selection:updated', onSelectionChange);
+  fabricCanvas.on('selection:cleared', onSelectionCleared);
+  fabricCanvas.on('object:modified', onObjectModified);
+  fabricCanvas.on('object:added', onObjectModified);
+  fabricCanvas.on('object:removed', onObjectModified);
+  fabricCanvas.on('text:changed', onObjectModified);
+
+  // Setup all event handlers
   setupToolbarEvents();
   setupPropertyEvents();
   setupLibraryEvents();
@@ -60,26 +81,15 @@ function init() {
   setupContextMenu();
   setupStatusBar();
 
+  // Create first page
   addPage();
-  applyZoom(1);
+
   setStatus('就绪');
-  console.log('[PhotoBook Studio] Init complete. fabric:', typeof fabric !== 'undefined' ? 'OK' : 'MISSING');
-  console.log('[PhotoBook Studio] electronAPI:', typeof window.electronAPI !== 'undefined' ? 'OK' : 'MISSING');
 }
 
 // ============================================
 // Canvas Events
 // ============================================
-
-function setupCanvasEvents(canvas) {
-  canvas.on('selection:created', onSelectionChange);
-  canvas.on('selection:updated', onSelectionChange);
-  canvas.on('selection:cleared', onSelectionCleared);
-  canvas.on('object:modified', onObjectModified);
-  canvas.on('object:added', onObjectModified);
-  canvas.on('object:removed', onObjectModified);
-  canvas.on('text:changed', onObjectModified);
-}
 
 function onSelectionChange() { updatePropertiesPanel(); }
 
@@ -90,14 +100,13 @@ function onSelectionCleared() {
 }
 
 function onObjectModified() {
-  renderCanvasToDOM();
-  scheduleSyncAndSave();
+  if (!state.historyBusy) scheduleSyncAndSave();
 }
 
-let syncTimeout = null;
+var syncTimer = null;
 function scheduleSyncAndSave() {
-  if (syncTimeout) clearTimeout(syncTimeout);
-  syncTimeout = setTimeout(saveState, 200);
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(saveState, 300);
 }
 
 // ============================================
@@ -105,7 +114,7 @@ function scheduleSyncAndSave() {
 // ============================================
 
 function addPage() {
-  const size = getCurrentPageSize();
+  var size = getCurrentPageSize();
   state.pages.push({
     objects: [],
     bgColor: '#ffffff',
@@ -116,7 +125,6 @@ function addPage() {
   switchToPage(state.pages.length - 1);
   renderPageThumbnails();
   saveState();
-  return state.pages.length - 1;
 }
 
 function deletePage(index) {
@@ -134,29 +142,35 @@ function deletePage(index) {
 function switchToPage(index) {
   saveCurrentPage();
   state.currentPageIndex = index;
-  const page = state.pages[index];
+  var page = state.pages[index];
 
   fabricCanvas.clear();
   fabricCanvas.backgroundColor = page.bgColor || '#ffffff';
 
-  fabric.util.enlivenObjects(
-    page.objects.map(function(o) { return JSON.parse(JSON.stringify(o)); }),
-    function(enlivened) {
-      enlivened.forEach(function(obj) { fabricCanvas.add(obj); });
-      fabricCanvas.renderAll();
-      renderCanvasToDOM();
-    }
-  );
+  var objs = page.objects || [];
+  var remaining = objs.length;
 
-  const size = getPageSize(page);
-  resizeCanvas(size.w, size.h);
+  if (remaining === 0) {
+    fabricCanvas.renderAll();
+    resizeCanvas(getPageSize(page).w, getPageSize(page).h);
+  } else {
+    fabric.util.enlivenObjects(
+      objs.map(function(o) { return JSON.parse(JSON.stringify(o)); }),
+      function(enlivened) {
+        enlivened.forEach(function(obj) { fabricCanvas.add(obj); });
+        fabricCanvas.renderAll();
+        resizeCanvas(getPageSize(page).w, getPageSize(page).h);
+      }
+    );
+  }
+
   renderPageThumbnails();
   updatePropertiesPanel();
   setStatus('第 ' + (index + 1) + ' / ' + state.pages.length + ' 页');
 }
 
 function saveCurrentPage() {
-  const page = state.pages[state.currentPageIndex];
+  var page = state.pages[state.currentPageIndex];
   if (!page || !fabricCanvas) return;
   page.objects = fabricCanvas.getObjects().map(function(obj) {
     return obj.toObject(['customId', 'cornerRadius', 'isPlaceholder', 'zoneIndex']);
@@ -166,16 +180,15 @@ function saveCurrentPage() {
 
 function getPageSize(page) {
   if (page.customSize) return page.customSize;
-  var sizeName = page.pageSize || 'A4';
-  var orientation = page.orientation || 'portrait';
-  var base = PAGE_SIZES[sizeName];
-  return base ? (base[orientation] || base.portrait) : { w: 595, h: 842 };
+  var sn = page.pageSize || 'A4';
+  var ori = page.orientation || 'portrait';
+  var base = PAGE_SIZES[sn];
+  return base ? (base[ori] || base.portrait) : { w: 595, h: 842 };
 }
 
 function getCurrentPageSize() {
   var page = state.pages[state.currentPageIndex];
-  if (!page) return { w: 595, h: 842 };
-  return getPageSize(page);
+  return page ? getPageSize(page) : { w: 595, h: 842 };
 }
 
 function getSelectedPageSizeName() {
@@ -189,34 +202,33 @@ function getSelectedOrientation() {
 }
 
 function resizeCanvas(w, h) {
-  fabricCanvas.setWidth(w);
-  fabricCanvas.setHeight(h);
-  canvasEl.width = w;
-  canvasEl.height = h;
-  applyZoom(state.zoom);
-  renderCanvasToDOM();
+  var scale = state.zoom;
+  fabricCanvas.setDimensions({ width: w * scale, height: h * scale });
+  var wrapper = document.getElementById('canvas-container');
+  if (wrapper) {
+    wrapper.style.width = (w * scale) + 'px';
+    wrapper.style.height = (h * scale) + 'px';
+  }
+  fabricCanvas.renderAll();
 }
 
-function renderCanvasToDOM() {
-  if (!fabricCanvas) return;
-  var tempCanvas = fabricCanvas.toCanvas();
-  var ctx = canvasEl.getContext('2d');
-  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-  ctx.drawImage(tempCanvas, 0, 0);
-}
+// ============================================
+// Page Thumbnails
+// ============================================
 
 function renderPageThumbnails() {
   var container = document.getElementById('page-thumbnails');
   if (!container) return;
   container.innerHTML = '';
 
-  state.pages.forEach(function(page, index) {
-    var div = document.createElement('div');
-    div.className = 'page-thumb' + (index === state.currentPageIndex ? ' active' : '');
-    div.title = '第 ' + (index + 1) + ' 页';
-
+  state.pages.forEach(function(page, i) {
     var size = getPageSize(page);
     var scale = 136 / Math.max(size.w, size.h);
+
+    var div = document.createElement('div');
+    div.className = 'page-thumb' + (i === state.currentPageIndex ? ' active' : '');
+    div.title = '第 ' + (i + 1) + ' 页';
+
     var tc = document.createElement('canvas');
     tc.width = size.w * scale;
     tc.height = size.h * scale;
@@ -224,38 +236,39 @@ function renderPageThumbnails() {
     tCtx.fillStyle = page.bgColor || '#ffffff';
     tCtx.fillRect(0, 0, tc.width, tc.height);
 
-    // Render thumbnail content
-    (function(idx, p, w, h, s) {
-      var tempFC = new fabric.Canvas(tc, { width: w, height: h, backgroundColor: p.bgColor || '#ffffff' });
-      if (p.objects && p.objects.length > 0) {
-        fabric.util.enlivenObjects(p.objects.map(function(o) { return JSON.parse(JSON.stringify(o)); }), function(enlivened) {
+    // Render objects as mini preview
+    if (page.objects && page.objects.length > 0) {
+      var tempFC = new fabric.Canvas(tc, {
+        width: tc.width,
+        height: tc.height,
+        backgroundColor: page.bgColor || '#ffffff',
+      });
+      fabric.util.enlivenObjects(
+        page.objects.map(function(o) { return JSON.parse(JSON.stringify(o)); }),
+        function(enlivened) {
           enlivened.forEach(function(obj) {
-            obj.scaleX = (obj.scaleX || 1) * s;
-            obj.scaleY = (obj.scaleY || 1) * s;
-            obj.left = (obj.left || 0) * s;
-            obj.top = (obj.top || 0) * s;
-            if (obj.fontSize) obj.fontSize = obj.fontSize * s;
+            obj.scaleX = (obj.scaleX || 1) * scale;
+            obj.scaleY = (obj.scaleY || 1) * scale;
+            obj.left = (obj.left || 0) * scale;
+            obj.top = (obj.top || 0) * scale;
+            if (obj.fontSize) obj.fontSize = obj.fontSize * scale;
             tempFC.add(obj);
           });
           tempFC.renderAll();
-          tCtx.clearRect(0, 0, w, h);
+          tCtx.clearRect(0, 0, tc.width, tc.height);
           tCtx.drawImage(tempFC.toCanvas(), 0, 0);
           tempFC.dispose();
-        });
-      } else {
-        tempFC.renderAll();
-        tCtx.drawImage(tempFC.toCanvas(), 0, 0);
-        tempFC.dispose();
-      }
-    })(index, page, tc.width, tc.height, scale);
+        }
+      );
+    }
 
     div.appendChild(tc);
     var num = document.createElement('span');
     num.className = 'page-thumb-num';
-    num.textContent = index + 1;
+    num.textContent = i + 1;
     div.appendChild(num);
-    div.addEventListener('click', function() { switchToPage(index); });
-    div.addEventListener('contextmenu', function(e) { showPageContextMenu(e, index); });
+    div.addEventListener('click', (function(idx) { return function() { switchToPage(idx); }; })(i));
+    div.addEventListener('contextmenu', (function(idx) { return function(e) { showPageContextMenu(e, idx); }; })(i));
     container.appendChild(div);
   });
 }
@@ -264,29 +277,37 @@ function renderPageThumbnails() {
 // Image Library
 // ============================================
 
-async function importImages(filePaths) {
+function importImages(filePaths) {
   setStatus('正在加载图片...');
-  var added = 0;
-  for (var i = 0; i < filePaths.length; i++) {
-    var filePath = filePaths[i];
-    try {
-      var dataUrl = await window.electronAPI.readImageAsDataUrl(filePath);
-      if (!dataUrl) continue;
-      var name = filePath.split(/[\\/]/).pop();
-      state.imageLibrary.push({ id: state.nextImageId++, dataUrl: dataUrl, name: name });
-      added++;
-    } catch (e) {
-      console.error('Failed to load image:', filePath, e);
+  var loaded = 0;
+  var total = filePaths.length;
+
+  function loadNext(idx) {
+    if (idx >= total) {
+      renderImageLibrary();
+      setStatus('已导入 ' + loaded + ' 张图片，共 ' + state.imageLibrary.length + ' 张');
+      return;
     }
+    window.electronAPI.readImageAsDataUrl(filePaths[idx]).then(function(dataUrl) {
+      if (dataUrl) {
+        var name = filePaths[idx].split(/[\\/]/).pop();
+        state.imageLibrary.push({ id: state.nextImageId++, dataUrl: dataUrl, name: name });
+        loaded++;
+      }
+      loadNext(idx + 1);
+    }).catch(function() {
+      loadNext(idx + 1);
+    });
   }
-  renderImageLibrary();
-  setStatus('已导入 ' + added + ' 张图片，共 ' + state.imageLibrary.length + ' 张');
+
+  loadNext(0);
 }
 
 function renderImageLibrary() {
   var container = document.getElementById('image-thumbnails');
   if (!container) return;
   container.innerHTML = '';
+
   state.imageLibrary.forEach(function(img) {
     var div = document.createElement('div');
     div.className = 'img-thumb';
@@ -298,38 +319,40 @@ function renderImageLibrary() {
     imgEl.src = img.dataUrl;
     imgEl.draggable = false;
     div.appendChild(imgEl);
+
     div.addEventListener('click', function() {
       state.selectedLibraryImage = img;
       renderImageLibrary();
     });
+
     div.addEventListener('dblclick', function() {
       addImageToCanvas(img.dataUrl);
     });
+
     container.appendChild(div);
   });
 }
 
 function addImageToCanvas(dataUrl) {
-  if (!fabricCanvas) return;
   fabric.Image.fromURL(dataUrl, function(img) {
-    if (!img) return;
-    var maxW = fabricCanvas.width * 0.7;
-    var maxH = fabricCanvas.height * 0.7;
+    if (!img) { setStatus('图片加载失败'); return; }
+    var size = getCurrentPageSize();
+    var maxW = size.w * 0.7;
+    var maxH = size.h * 0.7;
     if (img.width > maxW || img.height > maxH) {
       img.scale(Math.min(maxW / img.width, maxH / img.height));
     }
     img.set({
-      left: (fabricCanvas.width - img.getScaledWidth()) / 2,
-      top: (fabricCanvas.height - img.getScaledHeight()) / 2,
+      left: (fabricCanvas.width / state.zoom - img.getScaledWidth()) / 2,
+      top: (fabricCanvas.height / state.zoom - img.getScaledHeight()) / 2,
     });
     img.customId = state.nextObjectId++;
     img.objectCaching = false;
     fabricCanvas.add(img);
     fabricCanvas.setActiveObject(img);
     fabricCanvas.renderAll();
-    renderCanvasToDOM();
     scheduleSyncAndSave();
-    setStatus('已添加 (' + img.getScaledWidth().toFixed(0) + '×' + img.getScaledHeight().toFixed(0) + 'px)');
+    setStatus('已添加 (' + Math.round(img.getScaledWidth()) + 'x' + Math.round(img.getScaledHeight()) + ')');
   }, { crossOrigin: 'anonymous' });
 }
 
@@ -338,11 +361,11 @@ function addImageToCanvas(dataUrl) {
 // ============================================
 
 function addTextToCanvas() {
-  if (!fabricCanvas) return;
-  var fontSize = Math.max(12, Math.round(fabricCanvas.height * 0.04));
+  var size = getCurrentPageSize();
+  var fontSize = Math.max(12, Math.round(size.h * 0.04));
   var text = new fabric.IText('双击编辑文字', {
-    left: fabricCanvas.width / 2 - 100,
-    top: fabricCanvas.height / 2 - 20,
+    left: (fabricCanvas.width / state.zoom) / 2 - 100,
+    top: (fabricCanvas.height / state.zoom) / 2 - 20,
     fontFamily: 'Arial',
     fontSize: fontSize,
     fill: '#333333',
@@ -355,7 +378,6 @@ function addTextToCanvas() {
   fabricCanvas.add(text);
   fabricCanvas.setActiveObject(text);
   fabricCanvas.renderAll();
-  renderCanvasToDOM();
   scheduleSyncAndSave();
   setTool('select');
   setStatus('已添加文字，双击编辑');
@@ -381,7 +403,6 @@ function updatePropertiesPanel() {
   hideAllPropSections();
   showPropSection('prop-page');
   showPropSection('prop-library');
-  if (!fabricCanvas) return;
   var active = fabricCanvas.getActiveObject();
   if (!active) return;
   if (active.type === 'image') {
@@ -405,10 +426,12 @@ function updateImageProps(obj) {
   el = document.getElementById('shadow-options');
   if (el) el.style.display = shadow ? 'block' : 'none';
   if (shadow) {
-    ['img-shadow-x', 'img-shadow-y', 'img-shadow-blur'].forEach(function(id) {
-      el = document.getElementById(id);
-      if (el) el.value = shadow[id === 'img-shadow-x' ? 'offsetX' : id === 'img-shadow-y' ? 'offsetY' : 'blur'] || 4;
-    });
+    el = document.getElementById('img-shadow-x');
+    if (el) el.value = shadow.offsetX || 4;
+    el = document.getElementById('img-shadow-y');
+    if (el) el.value = shadow.offsetY || 4;
+    el = document.getElementById('img-shadow-blur');
+    if (el) el.value = shadow.blur || 8;
     el = document.getElementById('img-shadow-color');
     if (el) el.value = shadow.color || '#000000';
   }
@@ -457,26 +480,25 @@ function setupPropertyEvents() {
   // Image border
   document.getElementById('img-border-color').addEventListener('input', function(e) {
     var obj = fabricCanvas.getActiveObject();
-    if (obj) { obj.set('stroke', e.target.value); fabricCanvas.renderAll(); renderCanvasToDOM(); scheduleSyncAndSave(); }
+    if (obj) { obj.set('stroke', e.target.value); fabricCanvas.renderAll(); scheduleSyncAndSave(); }
   });
   document.getElementById('img-border-width').addEventListener('input', function(e) {
     var obj = fabricCanvas.getActiveObject();
-    if (obj) { obj.set('strokeWidth', parseInt(e.target.value) || 0); fabricCanvas.renderAll(); renderCanvasToDOM(); scheduleSyncAndSave(); }
+    if (obj) { obj.set('strokeWidth', parseInt(e.target.value) || 0); fabricCanvas.renderAll(); scheduleSyncAndSave(); }
   });
 
   // Shadow
   document.getElementById('img-shadow-enable').addEventListener('change', function(e) {
     var obj = fabricCanvas.getActiveObject();
     if (!obj) return;
-    var shadowOptions = document.getElementById('shadow-options');
-    if (shadowOptions) shadowOptions.style.display = e.target.checked ? 'block' : 'none';
+    var opts = document.getElementById('shadow-options');
+    if (opts) opts.style.display = e.target.checked ? 'block' : 'none';
     if (e.target.checked) {
       obj.setShadow(new fabric.Shadow({ offsetX: 4, offsetY: 4, blur: 8, color: 'rgba(0,0,0,0.3)' }));
     } else {
       obj.setShadow(null);
     }
     fabricCanvas.renderAll();
-    renderCanvasToDOM();
     scheduleSyncAndSave();
   });
 
@@ -490,7 +512,6 @@ function setupPropertyEvents() {
         var color = document.getElementById('img-shadow-color').value;
         obj.setShadow(new fabric.Shadow({ offsetX: ox, offsetY: oy, blur: blur, color: color }));
         fabricCanvas.renderAll();
-        renderCanvasToDOM();
         scheduleSyncAndSave();
       }
     });
@@ -502,7 +523,7 @@ function setupPropertyEvents() {
     var lbl = document.getElementById('corner-radius-val');
     if (lbl) lbl.textContent = val;
     var obj = fabricCanvas.getActiveObject();
-    if (obj && obj.type === 'image') { obj.cornerRadius = val; fabricCanvas.renderAll(); renderCanvasToDOM(); scheduleSyncAndSave(); }
+    if (obj && obj.type === 'image') { obj.cornerRadius = val; fabricCanvas.renderAll(); scheduleSyncAndSave(); }
   });
 
   // Opacity
@@ -511,20 +532,19 @@ function setupPropertyEvents() {
     var lbl = document.getElementById('opacity-val');
     if (lbl) lbl.textContent = val + '%';
     var obj = fabricCanvas.getActiveObject();
-    if (obj) { obj.set('opacity', val / 100); fabricCanvas.renderAll(); renderCanvasToDOM(); scheduleSyncAndSave(); }
+    if (obj) { obj.set('opacity', val / 100); fabricCanvas.renderAll(); scheduleSyncAndSave(); }
   });
 
   // Rotation
   document.getElementById('img-rotation').addEventListener('input', function(e) {
     var obj = fabricCanvas.getActiveObject();
-    if (obj) { obj.set('angle', parseFloat(e.target.value) || 0); fabricCanvas.renderAll(); renderCanvasToDOM(); scheduleSyncAndSave(); }
+    if (obj) { obj.set('angle', parseFloat(e.target.value) || 0); fabricCanvas.renderAll(); scheduleSyncAndSave(); }
   });
   document.getElementById('btn-rotate-90').addEventListener('click', function() {
     var obj = fabricCanvas.getActiveObject();
     if (obj) {
       obj.set('angle', (obj.angle || 0) + 90);
       fabricCanvas.renderAll();
-      renderCanvasToDOM();
       scheduleSyncAndSave();
       var el = document.getElementById('img-rotation');
       if (el) el.value = Math.round(obj.angle);
@@ -541,7 +561,6 @@ function setupPropertyEvents() {
     if (obj && (obj.type === 'i-text' || obj.type === 'text')) {
       obj.set('text', e.target.value);
       fabricCanvas.renderAll();
-      renderCanvasToDOM();
       scheduleSyncAndSave();
     }
   });
@@ -550,7 +569,6 @@ function setupPropertyEvents() {
     if (obj && (obj.type === 'i-text' || obj.type === 'text')) {
       obj.set('fontFamily', e.target.value);
       fabricCanvas.renderAll();
-      renderCanvasToDOM();
       scheduleSyncAndSave();
     }
   });
@@ -559,7 +577,6 @@ function setupPropertyEvents() {
     if (obj && (obj.type === 'i-text' || obj.type === 'text')) {
       obj.set('fontSize', parseInt(e.target.value) || 24);
       fabricCanvas.renderAll();
-      renderCanvasToDOM();
       scheduleSyncAndSave();
     }
   });
@@ -568,7 +585,6 @@ function setupPropertyEvents() {
     if (obj && (obj.type === 'i-text' || obj.type === 'text')) {
       obj.set('fill', e.target.value);
       fabricCanvas.renderAll();
-      renderCanvasToDOM();
       scheduleSyncAndSave();
     }
   });
@@ -580,7 +596,6 @@ function setupPropertyEvents() {
       var isBold = obj.fontWeight === 'bold';
       obj.set('fontWeight', isBold ? 'normal' : 'bold');
       fabricCanvas.renderAll();
-      renderCanvasToDOM();
       scheduleSyncAndSave();
       this.classList.toggle('active', !isBold);
     }
@@ -591,7 +606,6 @@ function setupPropertyEvents() {
       var isItalic = obj.fontStyle === 'italic';
       obj.set('fontStyle', isItalic ? 'normal' : 'italic');
       fabricCanvas.renderAll();
-      renderCanvasToDOM();
       scheduleSyncAndSave();
       this.classList.toggle('active', !isItalic);
     }
@@ -601,7 +615,6 @@ function setupPropertyEvents() {
     if (obj && (obj.type === 'i-text' || obj.type === 'text')) {
       obj.set('underline', !obj.underline);
       fabricCanvas.renderAll();
-      renderCanvasToDOM();
       scheduleSyncAndSave();
       this.classList.toggle('active', obj.underline);
     }
@@ -614,7 +627,6 @@ function setupPropertyEvents() {
       if (obj && (obj.type === 'i-text' || obj.type === 'text')) {
         obj.set('textAlign', align);
         fabricCanvas.renderAll();
-        renderCanvasToDOM();
         scheduleSyncAndSave();
         ['left', 'center', 'right'].forEach(function(a) {
           var btn = document.getElementById('btn-align-' + a);
@@ -625,26 +637,20 @@ function setupPropertyEvents() {
     });
   });
 
-  // Page bg color
+  // Page bg
   document.getElementById('page-bg-color').addEventListener('input', function(e) {
-    if (fabricCanvas) {
-      fabricCanvas.setBackgroundColor(e.target.value, function() {
-        fabricCanvas.renderAll();
-        renderCanvasToDOM();
-        if (state.pages[state.currentPageIndex]) state.pages[state.currentPageIndex].bgColor = e.target.value;
-        scheduleSyncAndSave();
-      });
-    }
+    fabricCanvas.setBackgroundColor(e.target.value, function() {
+      fabricCanvas.renderAll();
+      if (state.pages[state.currentPageIndex]) state.pages[state.currentPageIndex].bgColor = e.target.value;
+      scheduleSyncAndSave();
+    });
   });
   document.getElementById('btn-page-bg-transparent').addEventListener('click', function() {
-    if (fabricCanvas) {
-      fabricCanvas.setBackgroundColor(null, function() {
-        fabricCanvas.renderAll();
-        renderCanvasToDOM();
-        if (state.pages[state.currentPageIndex]) state.pages[state.currentPageIndex].bgColor = null;
-        scheduleSyncAndSave();
-      });
-    }
+    fabricCanvas.setBackgroundColor(null, function() {
+      fabricCanvas.renderAll();
+      if (state.pages[state.currentPageIndex]) state.pages[state.currentPageIndex].bgColor = null;
+      scheduleSyncAndSave();
+    });
   });
 
   // Page size
@@ -653,46 +659,53 @@ function setupPropertyEvents() {
       var el = document.getElementById(id);
       if (el) el.value = val;
     });
-    var customGroup = document.getElementById('custom-size-group');
-    if (customGroup) customGroup.style.display = val === 'custom' ? 'block' : 'none';
+    var cg = document.getElementById('custom-size-group');
+    if (cg) cg.style.display = val === 'custom' ? 'block' : 'none';
     applyPageSize(val);
   };
-  document.getElementById('page-size-select') && document.getElementById('page-size-select').addEventListener('change', function(e) { pageSizeChanged(e.target.value); });
-  document.getElementById('page-size-prop') && document.getElementById('page-size-prop').addEventListener('change', function(e) { pageSizeChanged(e.target.value); });
+  var sel1 = document.getElementById('page-size-select');
+  if (sel1) sel1.addEventListener('change', function(e) { pageSizeChanged(e.target.value); });
+  var sel2 = document.getElementById('page-size-prop');
+  if (sel2) sel2.addEventListener('change', function(e) { pageSizeChanged(e.target.value); });
 
-  var applyOrientationFn = function(orientation) {
-    var portrait = document.getElementById('btn-orient-portrait');
-    var landscape = document.getElementById('btn-orient-landscape');
-    if (portrait) portrait.classList.toggle('active', orientation === 'portrait');
-    if (landscape) landscape.classList.toggle('active', orientation === 'landscape');
-    var orientSel = document.getElementById('orientation-select');
-    if (orientSel) orientSel.value = orientation;
-    var sizeName = getSelectedPageSizeName();
-    if (sizeName === 'custom') {
+  var applyOrientationFn = function(ori) {
+    var po = document.getElementById('btn-orient-portrait');
+    var la = document.getElementById('btn-orient-landscape');
+    if (po) po.classList.toggle('active', ori === 'portrait');
+    if (la) la.classList.toggle('active', ori === 'landscape');
+    var os = document.getElementById('orientation-select');
+    if (os) os.value = ori;
+    var sn = getSelectedPageSizeName();
+    if (sn === 'custom') {
       var w = parseInt((document.getElementById('page-custom-w') || {}).value) || 595;
       var h = parseInt((document.getElementById('page-custom-h') || {}).value) || 842;
-      applyCanvasSize(orientation === 'landscape' ? h : w, orientation === 'landscape' ? w : h, 'custom', { w: w, h: h });
+      applyCanvasSize(ori === 'landscape' ? h : w, ori === 'landscape' ? w : h, 'custom', { w: w, h: h });
     } else {
-      var size = PAGE_SIZES[sizeName];
+      var size = PAGE_SIZES[sn];
       if (size) {
-        var dims = size[orientation] || size.portrait;
-        applyCanvasSize(dims.w, dims.h, sizeName, null);
+        var dims = size[ori] || size.portrait;
+        applyCanvasSize(dims.w, dims.h, sn, null);
       }
     }
   };
 
-  document.getElementById('orientation-select') && document.getElementById('orientation-select').addEventListener('change', function(e) { applyOrientationFn(e.target.value); });
-  document.getElementById('btn-orient-portrait') && document.getElementById('btn-orient-portrait').addEventListener('click', function() { applyOrientationFn('portrait'); });
-  document.getElementById('btn-orient-landscape') && document.getElementById('btn-orient-landscape').addEventListener('click', function() { applyOrientationFn('landscape'); });
-  document.getElementById('page-custom-w') && document.getElementById('page-custom-w').addEventListener('input', applyCustomSize);
-  document.getElementById('page-custom-h') && document.getElementById('page-custom-h').addEventListener('input', applyCustomSize);
+  var os2 = document.getElementById('orientation-select');
+  if (os2) os2.addEventListener('change', function(e) { applyOrientationFn(e.target.value); });
+  var po = document.getElementById('btn-orient-portrait');
+  if (po) po.addEventListener('click', function() { applyOrientationFn('portrait'); });
+  var la = document.getElementById('btn-orient-landscape');
+  if (la) la.addEventListener('click', function() { applyOrientationFn('landscape'); });
+  var cw = document.getElementById('page-custom-w');
+  if (cw) cw.addEventListener('input', applyCustomSize);
+  var ch = document.getElementById('page-custom-h');
+  if (ch) ch.addEventListener('input', applyCustomSize);
 }
 
 function applyPageSize(sizeName) {
-  var orientation = (document.getElementById('orientation-select') || {}).value || 'portrait';
+  var ori = (document.getElementById('orientation-select') || {}).value || 'portrait';
   var size = PAGE_SIZES[sizeName];
   if (!size) return;
-  var dims = size[orientation] || size.portrait;
+  var dims = size[ori] || size.portrait;
   applyCanvasSize(dims.w, dims.h, sizeName, null);
 }
 
@@ -705,32 +718,33 @@ function applyCustomSize() {
 function applyCanvasSize(w, h, pageSize, customSize) {
   saveCurrentPage();
   fabricCanvas.clear();
-  fabricCanvas.setWidth(w);
-  fabricCanvas.setHeight(h);
-  canvasEl.width = w;
-  canvasEl.height = h;
+  var ori = (document.getElementById('orientation-select') || {}).value || 'portrait';
   fabricCanvas.backgroundColor = (state.pages[state.currentPageIndex] || {}).bgColor || '#ffffff';
 
   var page = state.pages[state.currentPageIndex];
   if (page && page.objects && page.objects.length > 0) {
-    fabric.util.enlivenObjects(page.objects.map(function(o) { return JSON.parse(JSON.stringify(o)); }), function(enlivened) {
-      enlivened.forEach(function(obj) { fabricCanvas.add(obj); });
-      fabricCanvas.renderAll();
-      renderCanvasToDOM();
-    });
+    fabric.util.enlivenObjects(
+      page.objects.map(function(o) { return JSON.parse(JSON.stringify(o)); }),
+      function(enlivened) {
+        enlivened.forEach(function(obj) { fabricCanvas.add(obj); });
+        fabricCanvas.renderAll();
+        doResize(w, h, pageSize, ori, customSize);
+      }
+    );
   } else {
     fabricCanvas.renderAll();
-    renderCanvasToDOM();
+    doResize(w, h, pageSize, ori, customSize);
   }
+}
 
+function doResize(w, h, pageSize, ori, customSize) {
+  resizeCanvas(w, h);
   if (state.pages[state.currentPageIndex]) {
     state.pages[state.currentPageIndex].pageSize = pageSize;
-    state.pages[state.currentPageIndex].orientation = (document.getElementById('orientation-select') || {}).value || 'portrait';
+    state.pages[state.currentPageIndex].orientation = ori;
     state.pages[state.currentPageIndex].customSize = customSize;
     state.pages[state.currentPageIndex].bgColor = fabricCanvas.backgroundColor || '#ffffff';
   }
-
-  applyZoom(state.zoom);
   renderPageThumbnails();
   saveState();
 }
@@ -742,8 +756,8 @@ function applyCanvasSize(w, h, pageSize, customSize) {
 function applyTemplate(templateName) {
   fabricCanvas.clear();
   fabricCanvas.backgroundColor = (state.pages[state.currentPageIndex] || {}).bgColor || '#ffffff';
-  var W = fabricCanvas.width;
-  var H = fabricCanvas.height;
+  var W = fabricCanvas.width / state.zoom;
+  var H = fabricCanvas.height / state.zoom;
   var PAD = W * 0.05;
   var zones = [];
 
@@ -781,9 +795,9 @@ function applyTemplate(templateName) {
     case 'grid-3x3':
       var cellW = (W - PAD * 4) / 3;
       var cellH = (H - PAD * 4) / 3;
-      for (var row = 0; row < 3; row++) {
-        for (var col = 0; col < 3; col++) {
-          zones.push({ x: PAD + col * (cellW + PAD), y: PAD + row * (cellH + PAD), w: cellW, h: cellH });
+      for (var r = 0; r < 3; r++) {
+        for (var c = 0; c < 3; c++) {
+          zones.push({ x: PAD + c * (cellW + PAD), y: PAD + r * (cellH + PAD), w: cellW, h: cellH });
         }
       }
       break;
@@ -797,15 +811,15 @@ function applyTemplate(templateName) {
       fill: '#e8e8e8', stroke: '#bbbbbb', strokeWidth: 1, strokeDashArray: [5, 3],
       selectable: false, evented: false,
     });
-    rect.isPlaceholder = true;    rect.zoneIndex = i;
+    rect.isPlaceholder = true;
+    rect.zoneIndex = i;
     rect.objectCaching = false;
     fabricCanvas.add(rect);
 
     var label = new fabric.Text('区域 ' + (i + 1) + '\n双击缩略图添加', {
       left: zone.x + zone.w / 2, top: zone.y + zone.h / 2,
       fontSize: Math.max(10, Math.round(W * 0.018)),
-      fill: '#aaaaaa',
-      originX: 'center', originY: 'center', textAlign: 'center',
+      fill: '#aaaaaa', originX: 'center', originY: 'center', textAlign: 'center',
       selectable: false, evented: false,
     });
     label.isPlaceholder = true;
@@ -814,7 +828,6 @@ function applyTemplate(templateName) {
   });
 
   fabricCanvas.renderAll();
-  renderCanvasToDOM();
   scheduleSyncAndSave();
   setStatus('已应用模板: ' + templateName);
 }
@@ -822,77 +835,64 @@ function applyTemplate(templateName) {
 // ============================================
 // Toolbar Events
 // ============================================
-
 function setupToolbarEvents() {
-  var btn;
-  btn = document.getElementById('btn-select');
-  if (btn) btn.addEventListener('click', function() { setTool('select'); });
-  btn = document.getElementById('btn-text');
-  if (btn) btn.addEventListener('click', function() { setTool('text'); addTextToCanvas(); });
-  btn = document.getElementById('btn-add-page');
-  if (btn) btn.addEventListener('click', function() { addPage(); });
-  btn = document.getElementById('btn-add-page-panel');
-  if (btn) btn.addEventListener('click', function() { addPage(); });
-  btn = document.getElementById('btn-delete-page');
-  if (btn) btn.addEventListener('click', function() { deletePage(state.currentPageIndex); });
-  btn = document.getElementById('btn-undo');
-  if (btn) btn.addEventListener('click', function() { undo(); });
-  btn = document.getElementById('btn-redo');
-  if (btn) btn.addEventListener('click', function() { redo(); });
-  var zoomSel = document.getElementById('zoom-select');
-  if (zoomSel) zoomSel.addEventListener('change', function(e) { applyZoom(parseFloat(e.target.value)); });
-  var tmplSel = document.getElementById('template-select');
-  if (tmplSel) tmplSel.addEventListener('change', function(e) {
+  var bind = function(id, event, fn) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener(event, fn);
+  };
+
+
+  bind('btn-select', 'click', function() { setTool('select'); });
+  bind('btn-text', 'click', function() { setTool('text'); addTextToCanvas(); });
+  bind('btn-add-page', 'click', function() { addPage(); });
+  bind('btn-add-page-panel', 'click', function() { addPage(); });
+  bind('btn-delete-page', 'click', function() { deletePage(state.currentPageIndex); });
+  bind('btn-undo', 'click', function() { undo(); });
+  bind('btn-redo', 'click', function() { redo(); });
+  var zs = document.getElementById('zoom-select');
+  if (zs) zs.addEventListener('change', function(e) { applyZoom(parseFloat(e.target.value)); });
+  var ts = document.getElementById('template-select');
+  if (ts) ts.addEventListener('change', function(e) {
     if (e.target.value) { applyTemplate(e.target.value); e.target.value = ''; }
   });
-  btn = document.getElementById('btn-export-pdf');
-  if (btn) btn.addEventListener('click', function() { exportToPdf(); });
-  btn = document.getElementById('btn-export-png');
-  if (btn) btn.addEventListener('click', function() { exportCurrentPage('png'); });
+  bind('btn-export-pdf', 'click', function() { exportToPdf(); });
+  bind('btn-export-png', 'click', function() { exportCurrentPage('png'); });
 }
 
 function setTool(tool) {
   state.currentTool = tool;
-  var btnSelect = document.getElementById('btn-select');
-  var btnText = document.getElementById('btn-text');
-  if (btnSelect) btnSelect.classList.toggle('active', tool === 'select');
-  if (btnText) btnText.classList.toggle('active', tool === 'text');
+  var bs = document.getElementById('btn-select');
+  var bt = document.getElementById('btn-text');
+  if (bs) bs.classList.toggle('active', tool === 'select');
+  if (bt) bt.classList.toggle('active', tool === 'text');
   if (fabricCanvas) {
     fabricCanvas.selection = tool === 'select';
     fabricCanvas.defaultCursor = tool === 'text' ? 'text' : 'default';
   }
 }
 
-// ============================================
-// Zoom
-// ============================================
-
 function applyZoom(zoom) {
-  state.zoom = zoom;
-  var size = getCurrentPageSize();
-  canvasEl.style.transform = 'scale(' + zoom + ')';
-  canvasEl.style.transformOrigin = 'top left';
-  canvasEl.style.width = (size.w * zoom) + 'px';
-  canvasEl.style.height = (size.h * zoom) + 'px';
-  wrapperEl.style.minWidth = Math.max(800, size.w * zoom + 80) + 'px';
-  wrapperEl.style.minHeight = Math.max(600, size.h * zoom + 80) + 'px';
-  renderCanvasToDOM();
+  var z = Math.max(0.1, Math.min(4, zoom));
+  state.zoom = z;
+  fabricCanvas.setZoom(z);
+  fabricCanvas.renderAll();
+  var wrapper = document.getElementById('canvas-container');
+  if (wrapper) {
+    wrapper.style.width = (fabricCanvas.width * z) + 'px';
+    wrapper.style.height = (fabricCanvas.height * z) + 'px';
+  }
 }
-
-// ============================================
-// History (Undo/Redo)
-// ============================================
 
 function saveState() {
   saveCurrentPage();
   if (state.historyIndex < state.history.length - 1) {
     state.history = state.history.slice(0, state.historyIndex + 1);
   }
-  var snapshot = JSON.stringify({
+  var snap = JSON.stringify({
     pages: state.pages.map(function(p) { return { objects: p.objects, bgColor: p.bgColor, pageSize: p.pageSize, orientation: p.orientation, customSize: p.customSize }; }),
     currentPage: state.currentPageIndex,
   });
-  state.history.push(snapshot);
+  state.history.push(snap);
   state.historyIndex = state.history.length - 1;
   if (state.history.length > 50) {
     state.history = state.history.slice(-30);
@@ -914,18 +914,14 @@ function redo() {
   setStatus('重做');
 }
 
-function restoreState(snapshot) {
-  state.pages = snapshot.pages;
-  if (snapshot.currentPage !== state.currentPageIndex) {
-    state.currentPageIndex = snapshot.currentPage;
+function restoreState(snap) {
+  state.pages = snap.pages;
+  if (snap.currentPage !== state.currentPageIndex) {
+    state.currentPageIndex = snap.currentPage;
   }
   switchToPage(state.currentPageIndex);
   renderPageThumbnails();
 }
-
-// ============================================
-// Delete
-// ============================================
 
 function deleteSelectedObject() {
   var active = fabricCanvas.getActiveObject();
@@ -936,53 +932,39 @@ function deleteSelectedObject() {
   fabricCanvas.remove(active);
   fabricCanvas.discardActiveObject();
   fabricCanvas.renderAll();
-  renderCanvasToDOM();
   scheduleSyncAndSave();
   setStatus('已删除');
 }
 
-// ============================================
-// Library Events
-// ============================================
-
 function setupLibraryEvents() {
-  var btn = document.getElementById('btn-import-images');
-  if (btn) {
-    btn.addEventListener('click', function() {
-      if (typeof window.electronAPI !== 'undefined') {
-        window.electronAPI.selectImages().then(function(paths) {
+  var bind = function(id, event, fn) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener(event, fn);
+  };
+
+  bind('btn-import-images', 'click', function() {
+    window.electronAPI.selectImages().then(function(paths) {
+      if (paths && paths.length) importImages(paths);
+    }).catch(function(err) { console.error('selectImages error:', err); setStatus('导入失败'); });
+  });
+
+  bind('btn-import-folder', 'click', function() {
+    window.electronAPI.selectFolder().then(function(folder) {
+      if (folder) {
+        window.electronAPI.readImagesFromFolder(folder).then(function(paths) {
           if (paths && paths.length) importImages(paths);
-        }).catch(function(err) {
-          console.error('selectImages error:', err);
-          setStatus('导入失败');
-        });
-      } else {
-        console.error('electronAPI not available');
-        setStatus('electronAPI 不可用');
-      }
-    });
-  }
-  btn = document.getElementById('btn-import-folder');
-  if (btn) {
-    btn.addEventListener('click', function() {
-      if (typeof window.electronAPI !== 'undefined') {
-        window.electronAPI.selectFolder().then(function(folder) {
-          if (folder) {
-            window.electronAPI.readImagesFromFolder(folder).then(function(paths) {
-              if (paths && paths.length) importImages(paths);
-            });
-          }
         });
       }
     });
-  }
-  var dropZone = document.getElementById('image-drop-zone');
-  if (dropZone) {
-    dropZone.addEventListener('dragover', function(e) { e.preventDefault(); dropZone.classList.add('drag-over'); });
-    dropZone.addEventListener('dragleave', function() { dropZone.classList.remove('drag-over'); });
-    dropZone.addEventListener('drop', function(e) {
+  });
+
+  var dz = document.getElementById('image-drop-zone');
+  if (dz) {
+    dz.addEventListener('dragover', function(e) { e.preventDefault(); dz.classList.add('drag-over'); });
+    dz.addEventListener('dragleave', function() { dz.classList.remove('drag-over'); });
+    dz.addEventListener('drop', function(e) {
       e.preventDefault();
-      dropZone.classList.remove('drag-over');
+      dz.classList.remove('drag-over');
       var files = Array.from(e.dataTransfer.files);
       var paths = files.map(function(f) { return f.path; }).filter(function(p) { return p; });
       if (paths.length) importImages(paths);
@@ -990,22 +972,14 @@ function setupLibraryEvents() {
   }
 }
 
-// ============================================
-// Drag & Drop on Canvas
-// ============================================
-
 function setupDragDropEvents() {
-  if (canvasEl) {
-    canvasEl.addEventListener('dblclick', function() {
-      var img = state.selectedLibraryImage;
-      if (img) addImageToCanvas(img.dataUrl);
+  var el = document.getElementById('fabric-canvas');
+  if (el) {
+    el.addEventListener('dblclick', function() {
+      if (state.selectedLibraryImage) addImageToCanvas(state.selectedLibraryImage.dataUrl);
     });
   }
 }
-
-// ============================================
-// Keyboard
-// ============================================
 
 function setupKeyboardEvents() {
   document.addEventListener('keydown', function(e) {
@@ -1028,40 +1002,30 @@ function setupKeyboardEvents() {
     }
     if (e.key === 'v') setTool('select');
     if (e.key === 't') { setTool('text'); addTextToCanvas(); }
-    if (e.key === '+' || e.key === '=') applyZoom(Math.min(4, state.zoom + 0.25));
-    if (e.key === '-') applyZoom(Math.max(0.1, state.zoom - 0.25));
+    if (e.key === '+' || e.key === '=') applyZoom(state.zoom + 0.25);
+    if (e.key === '-') applyZoom(state.zoom - 0.25);
   });
 }
 
-// ============================================
-// Menu Events (from main process)
-// ============================================
-
 function setupMenuEvents() {
   if (typeof window.electronAPI === 'undefined') { console.error('electronAPI not found'); return; }
-  window.electronAPI.onMenuImportImages(function() {
-    window.electronAPI.selectImages().then(function(paths) { if (paths && paths.length) importImages(paths); });
-  });
+  window.electronAPI.onMenuImportImages(function() { window.electronAPI.selectImages().then(function(p) { if (p && p.length) importImages(p); }); });
   window.electronAPI.onMenuExportPdf(function() { exportToPdf(); });
   window.electronAPI.onMenuExportPng(function() { exportCurrentPage('png'); });
   window.electronAPI.onMenuUndo(function() { undo(); });
   window.electronAPI.onMenuRedo(function() { redo(); });
   window.electronAPI.onMenuDelete(function() { deleteSelectedObject(); });
-  window.electronAPI.onMenuZoomIn(function() { applyZoom(Math.min(4, state.zoom + 0.25)); });
-  window.electronAPI.onMenuZoomOut(function() { applyZoom(Math.max(0.1, state.zoom - 0.25)); });
+  window.electronAPI.onMenuZoomIn(function() { applyZoom(state.zoom + 0.25); });
+  window.electronAPI.onMenuZoomOut(function() { applyZoom(state.zoom - 0.25); });
   window.electronAPI.onMenuZoomReset(function() { applyZoom(1); });
 }
-
-// ============================================
-// Context Menu
-// ============================================
 
 var ctxMenuEl = null;
 
 function setupContextMenu() {
   document.addEventListener('contextmenu', function(e) {
     var target = e.target;
-    if (target === canvasEl || (target && target.closest && target.closest('#canvas-area'))) {
+    if (target.id === 'fabric-canvas' || (target.closest && target.closest('#canvas-area'))) {
       e.preventDefault();
       showContextMenu(e.clientX, e.clientY);
     }
@@ -1073,7 +1037,8 @@ function showContextMenu(x, y) {
   hideContextMenu();
   ctxMenuEl = document.createElement('div');
   ctxMenuEl.className = 'context-menu';
-  ctxMenuEl.innerHTML = '<div class="context-menu-item" id="ctx-add-text">✍ 添加文字</div>' +
+  ctxMenuEl.innerHTML =
+    '<div class="context-menu-item" id="ctx-add-text">✍ 添加文字</div>' +
     '<div class="context-menu-item" id="ctx-add-page">📄 添加页面</div>' +
     '<div class="context-menu-divider"></div>' +
     '<div class="context-menu-item" id="ctx-import">📂 导入图片</div>' +
@@ -1090,10 +1055,7 @@ function showContextMenu(x, y) {
   if (el) el.addEventListener('click', function() { addPage(); hideContextMenu(); });
   el = document.getElementById('ctx-import');
   if (el) el.addEventListener('click', function() {
-    window.electronAPI.selectImages().then(function(paths) {
-      if (paths && paths.length) importImages(paths);
-      hideContextMenu();
-    });
+    window.electronAPI.selectImages().then(function(p) { if (p && p.length) importImages(p); hideContextMenu(); });
   });
   el = document.getElementById('ctx-delete-page');
   if (el) el.addEventListener('click', function() { deletePage(state.currentPageIndex); hideContextMenu(); });
@@ -1109,21 +1071,18 @@ function showPageContextMenu(e, pageIndex) {
   hideContextMenu();
   ctxMenuEl = document.createElement('div');
   ctxMenuEl.className = 'context-menu';
-  ctxMenuEl.innerHTML = '<div class="context-menu-item" id="ctx-go-page">跳转到第 ' + (pageIndex + 1) + ' 页</div>' +
+  ctxMenuEl.innerHTML =
+    '<div class="context-menu-item" id="ctx-go-page">跳转到第 ' + (pageIndex + 1) + ' 页</div>' +
     (state.pages.length > 1 ? '<div class="context-menu-item" id="ctx-del-page">🗑 删除此页</div>' : '');
   document.body.appendChild(ctxMenuEl);
   ctxMenuEl.style.left = e.clientX + 'px';
   ctxMenuEl.style.top = e.clientY + 'px';
-  var el;
-  el = document.getElementById('ctx-go-page');
+
+  var el = document.getElementById('ctx-go-page');
   if (el) el.addEventListener('click', function() { switchToPage(pageIndex); hideContextMenu(); });
   el = document.getElementById('ctx-del-page');
   if (el) el.addEventListener('click', function() { deletePage(pageIndex); hideContextMenu(); });
 }
-
-// ============================================
-// Export
-// ============================================
 
 async function exportToPdf() {
   if (!state.pages.length) return;
@@ -1134,43 +1093,45 @@ async function exportToPdf() {
     var firstPage = state.pages[0];
     var W = getPageSize(firstPage).w;
     var H = getPageSize(firstPage).h;
-    var orientation = W > H ? 'landscape' : 'portrait';
+    var ori = W > H ? 'landscape' : 'portrait';
     var pdfFormat = 'a4';
     if (Math.abs(W / H - 1) < 0.05) pdfFormat = [Math.max(W, H) * 0.2646, Math.min(W, H) * 0.2646];
-    var pdf = new JsPDF({ orientation: orientation, unit: 'px', format: pdfFormat, hotfixes: ['px_scaling'] });
+    var pdf = new JsPDF({ orientation: ori, unit: 'px', format: pdfFormat, hotfixes: ['px_scaling'] });
 
     for (var i = 0; i < state.pages.length; i++) {
       if (i > 0) pdf.addPage();
       var p = state.pages[i];
       var size = getPageSize(p);
-      var tempCanvas = document.createElement('canvas');
-      tempCanvas.width = size.w;
-      tempCanvas.height = size.h;
-      var tempFC = new fabric.Canvas(tempCanvas, { width: size.w, height: size.h, backgroundColor: p.bgColor || '#ffffff' });
+      var tc = document.createElement('canvas');
+      tc.width = size.w;
+      tc.height = size.h;
+      var tfc = new fabric.Canvas(tc, { width: size.w, height: size.h, backgroundColor: p.bgColor || '#ffffff' });
 
       if (p.objects && p.objects.length > 0) {
         await new Promise(function(resolve) {
-          fabric.util.enlivenObjects(p.objects.map(function(o) { return JSON.parse(JSON.stringify(o)); }), function(enlivened) {
-            enlivened.forEach(function(obj) { tempFC.add(obj); });
-            tempFC.renderAll();
-            resolve();
-          });
+          fabric.util.enlivenObjects(
+            p.objects.map(function(o) { return JSON.parse(JSON.stringify(o)); }),
+            function(enlivened) {
+              enlivened.forEach(function(obj) { tfc.add(obj); });
+              tfc.renderAll();
+              resolve();
+            }
+          );
         });
       } else {
-        tempFC.renderAll();
+        tfc.renderAll();
       }
 
-      var dataUrl = tempCanvas.toDataURL('image/jpeg', 0.95);
+      var dataUrl = tc.toDataURL('image/jpeg', 0.95);
       pdf.addImage(dataUrl, 'JPEG', 0, 0, pdf.internal.pageSize.getWidth(), pdf.internal.pageSize.getHeight());
-      tempFC.dispose();
+      tfc.dispose();
       setStatus('导出中... ' + (i + 1) + '/' + state.pages.length);
     }
 
-    var defaultName = 'PhotoBook_' + Date.now() + '.pdf';
-    var savePath = await window.electronAPI.saveFile({ defaultName: defaultName, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+    var name = 'PhotoBook_' + Date.now() + '.pdf';
+    var savePath = await window.electronAPI.saveFile({ defaultName: name, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
     if (savePath) {
-      var pdfData = pdf.output('arraybuffer');
-      await window.electronAPI.writeFile({ filePath: savePath, data: pdfData, encoding: 'arraybuffer' });
+      await window.electronAPI.writeFile({ filePath: savePath, data: pdf.output('arraybuffer'), encoding: 'arraybuffer' });
       setStatus('PDF 已导出: ' + savePath);
     }
   } catch (err) {
@@ -1187,34 +1148,37 @@ async function exportCurrentPage(format) {
     saveCurrentPage();
     var page = state.pages[state.currentPageIndex];
     var size = getPageSize(page);
-    var tempCanvas = document.createElement('canvas');
-    tempCanvas.width = size.w;
-    tempCanvas.height = size.h;
-    var tempFC = new fabric.Canvas(tempCanvas, { width: size.w, height: size.h, backgroundColor: page.bgColor || '#ffffff' });
+    var tc = document.createElement('canvas');
+    tc.width = size.w;
+    tc.height = size.h;
+    var tfc = new fabric.Canvas(tc, { width: size.w, height: size.h, backgroundColor: page.bgColor || '#ffffff' });
 
     if (page.objects && page.objects.length > 0) {
       await new Promise(function(resolve) {
-        fabric.util.enlivenObjects(page.objects.map(function(o) { return JSON.parse(JSON.stringify(o)); }), function(enlivened) {
-          enlivened.forEach(function(obj) { tempFC.add(obj); });
-          tempFC.renderAll();
-          resolve();
-        });
+        fabric.util.enlivenObjects(
+          page.objects.map(function(o) { return JSON.parse(JSON.stringify(o)); }),
+          function(enlivened) {
+            enlivened.forEach(function(obj) { tfc.add(obj); });
+            tfc.renderAll();
+            resolve();
+          }
+        );
       });
     } else {
-      tempFC.renderAll();
+      tfc.renderAll();
     }
 
-    var defaultName = 'PhotoBook_Page' + (state.currentPageIndex + 1) + '_' + Date.now() + '.' + format;
+    var name = 'PhotoBook_Page' + (state.currentPageIndex + 1) + '_' + Date.now() + '.' + format;
     var filters = format === 'png' ? [{ name: 'PNG', extensions: ['png'] }] : [{ name: 'JPEG', extensions: ['jpg', 'jpeg'] }];
-    var savePath = await window.electronAPI.saveFile({ defaultName: defaultName, filters: filters });
+    var savePath = await window.electronAPI.saveFile({ defaultName: name, filters: filters });
     if (savePath) {
       var mime = format === 'png' ? 'image/png' : 'image/jpeg';
-      var quality = format === 'png' ? 1 : 0.95;
-      var dataUrl = tempCanvas.toDataURL(mime, quality);
+      var qual = format === 'png' ? 1 : 0.95;
+      var dataUrl = tc.toDataURL(mime, qual);
       await window.electronAPI.writeFile({ filePath: savePath, data: dataUrl, encoding: 'base64' });
       setStatus('已导出: ' + savePath);
     }
-    tempFC.dispose();
+    tfc.dispose();
   } catch (err) {
     console.error('Export error:', err);
     setStatus('导出失败: ' + err.message);
@@ -1223,16 +1187,12 @@ async function exportCurrentPage(format) {
   }
 }
 
-// ============================================
-// Loading Overlay
-// ============================================
-
 function showLoading(msg) {
   hideLoading();
-  var overlay = document.createElement('div');
-  overlay.id = 'loading-overlay';
-  overlay.innerHTML = '<div class="spinner"></div><div class="msg">' + msg + '</div>';
-  document.body.appendChild(overlay);
+  var ov = document.createElement('div');
+  ov.id = 'loading-overlay';
+  ov.innerHTML = '<div class="spinner"></div><div class="msg">' + msg + '</div>';
+  document.body.appendChild(ov);
 }
 
 function hideLoading() {
@@ -1240,17 +1200,11 @@ function hideLoading() {
   if (old) old.remove();
 }
 
-// ============================================
-// Status Bar
-// ============================================
-
 function setStatus(text) {
   var el = document.getElementById('status-text');
   if (el) el.textContent = text;
 }
 
-// ============================================
-// Start
-// ============================================
+function setupStatusBar() { /* setStatus is standalone */ }
 
 document.addEventListener('DOMContentLoaded', init);
