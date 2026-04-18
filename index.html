@@ -267,12 +267,40 @@
     </div>
   </div>
 
+  <!-- Quick Diagnostic Panel -->
+  <div id="diag-panel" style="position:fixed;top:5px;right:5px;background:#1a1a2e;color:#0f0;border:1px solid #333;padding:8px 12px;font-size:11px;font-family:monospace;z-index:9999;border-radius:4px;max-width:300px;">
+    <div style="font-weight:bold;margin-bottom:4px;color:#0ff;">🔍 PhotoBook诊断</div>
+    <div id="diag-msg">检测中...</div>
+  </div>
+
   <!-- Status Bar -->
   <div id="status-bar">
     <span id="status-text">就绪</span>
     <span id="status-info"></span>
   </div>
 
+  <script>
+  (function(){
+    var d = document.getElementById('diag-msg');
+    var s = document.getElementById('status-text');
+    var parts = [];
+    var libOK = typeof fabric !== 'undefined';
+    var apiOK = typeof window.electronAPI !== 'undefined';
+    var zoomOK = !!document.getElementById('zoom-select');
+    var importOK = !!document.getElementById('btn-import-images');
+    var canvasOK = !!document.getElementById('fabric-canvas');
+    parts.push('fabric:' + (libOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>'));
+    parts.push('api:' + (apiOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>'));
+    parts.push('canvas:' + (canvasOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>'));
+    parts.push('zoom:' + (zoomOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>'));
+    parts.push('import:' + (importOK ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f44">MISSING</span>'));
+    d.innerHTML = parts.join('<br>');
+    if (s) s.textContent = 'lib='+(libOK?'OK':'ERR')+' api='+(apiOK?'OK':'ERR');
+    if (!libOK || !apiOK) {
+      document.getElementById('diag-panel').style.background = '#3a0000';
+    }
+  })();
+  </script>
   <script src="src/renderer.js"></script>
 </body>
 </html>
