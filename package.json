@@ -33,7 +33,10 @@
     },
     "files": [
       "src/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "node_modules/fabric/**/*",
+      "node_modules/jspdf/**/*",
+      "node_modules/html2canvas/**/*"
     ]
   }
 }
