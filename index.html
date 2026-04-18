@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PhotoBook Studio</title>
+  <link rel="stylesheet" href="src/styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <div class="toolbar-section">
+      <button class="tool-btn active" id="btn-select" title="选择工具 (V)">✥</button>
+      <button class="tool-btn" id="btn-text" title="文字工具 (T)">T</button>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-section">
+      <button class="tool-btn" id="btn-add-page" title="添加页面">+ 页面</button>
+      <button class="tool-btn" id="btn-delete-page" title="删除当前页面">− 页面</button>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-section">
+      <button class="tool-btn" id="btn-undo" title="撤销 (Ctrl+Z)">↩</button>
+      <button class="tool-btn" id="btn-redo" title="重做 (Ctrl+Y)">↪</button>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-section">
+      <label class="toolbar-label">缩放:</label>
+      <select id="zoom-select" class="toolbar-select">
+        <option value="0.25">25%</option>
+        <option value="0.5">50%</option>
+        <option value="0.75">75%</option>
+        <option value="1" selected>100%</option>
+        <option value="1.25">125%</option>
+        <option value="1.5">150%</option>
+        <option value="2">200%</option>
+        <option value="3">300%</option>
+      </select>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-section">
+      <label class="toolbar-label">模板:</label>
+      <select id="template-select" class="toolbar-select">
+        <option value="">— 应用到当前页 —</option>
+        <option value="1-photo">1 张图（全页）</option>
+        <option value="2-photo-v">2 张图（上下）</option>
+        <option value="2-photo-h">2 张图（左右）</option>
+        <option value="3-photo">3 张图（1大2小）</option>
+        <option value="4-photo">4 张图（2×2）</option>
+        <option value="grid-3x3">网格（3×3）</option>
+      </select>
+    </div>
+    <div class="toolbar-spacer"></div>
+    <div class="toolbar-section">
+      <select id="page-size-select" class="toolbar-select" title="页面尺寸">
+        <option value="A5">A5</option>
+        <option value="A4" selected>A4</option>
+        <option value="square">方形</option>
+        <option value="custom">自定义</option>
+      </select>
+      <select id="orientation-select" class="toolbar-select" title="方向">
+        <option value="portrait" selected>纵向</option>
+        <option value="landscape">横向</option>
+      </select>
+    </div>
+    <div class="toolbar-divider"></div>
+    <button class="tool-btn export-btn" id="btn-export-pdf" title="导出 PDF">📄 导出 PDF</button>
+    <button class="tool-btn export-btn" id="btn-export-png" title="导出当前页 PNG">🖼 导出 PNG</button>
+  </div>
+
+  <!-- Main Layout -->
+  <div id="main-layout">
+    <!-- Left Panel: Page Thumbnails -->
+    <div id="left-panel">
+      <div class="panel-header">📄 页面</div>
+      <div id="page-thumbnails"></div>
+      <div class="panel-footer">
+        <button class="panel-btn" id="btn-add-page-panel">+ 添加页面</button>
+      </div>
+    </div>
+
+    <!-- Center: Canvas Area -->
+    <div id="canvas-area">
+      <div id="canvas-wrapper">
+        <div id="canvas-container">
+          <canvas id="fabric-canvas"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Panel: Properties -->
+    <div id="right-panel">
+      <!-- Image Properties -->
+      <div class="prop-section" id="prop-image" style="display:none;">
+        <div class="panel-header">🖼 图片属性</div>
+        <div class="prop-group">
+          <label>边框</label>
+          <div class="prop-row">
+            <input type="color" id="img-border-color" value="#ffffff" title="边框颜色">
+            <input type="number" id="img-border-width" value="0" min="0" max="50" title="边框宽度(px)">
+            <span class="prop-label">px</span>
+          </div>
+        </div>
+        <div class="prop-group">
+          <label>阴影</label>
+          <div class="prop-row">
+            <input type="checkbox" id="img-shadow-enable">
+            <label for="img-shadow-enable" class="inline-label">启用</label>
+          </div>
+          <div class="prop-subrow" id="shadow-options" style="display:none;">
+            <div class="prop-row">
+              <span class="prop-label">偏移</span>
+              <input type="number" id="img-shadow-x" value="4" min="-50" max="50">
+              <input type="number" id="img-shadow-y" value="4" min="-50" max="50">
+            </div>
+            <div class="prop-row">
+              <span class="prop-label">模糊</span>
+              <input type="number" id="img-shadow-blur" value="8" min="0" max="50">
+              <input type="color" id="img-shadow-color" value="#000000">
+            </div>
+          </div>
+        </div>
+        <div class="prop-group">
+          <label>圆角</label>
+          <div class="prop-row">
+            <input type="range" id="img-corner-radius" min="0" max="100" value="0">
+            <span id="corner-radius-val">0</span>
+          </div>
+        </div>
+        <div class="prop-group">
+          <label>不透明度</label>
+          <div class="prop-row">
+            <input type="range" id="img-opacity" min="0" max="100" value="100">
+            <span id="opacity-val">100%</span>
+          </div>
+        </div>
+        <div class="prop-group">
+          <label>旋转</label>
+          <div class="prop-row">
+            <input type="number" id="img-rotation" value="0" min="-180" max="180">
+            <span class="prop-label">°</span>
+            <button class="prop-btn" id="btn-rotate-90">90°</button>
+          </div>
+        </div>
+        <div class="prop-group">
+          <button class="panel-btn danger" id="btn-delete-object">🗑 删除对象</button>
+        </div>
+      </div>
+
+      <!-- Text Properties -->
+      <div class="prop-section" id="prop-text" style="display:none;">
+        <div class="panel-header">✍ 文字属性</div>
+        <div class="prop-group">
+          <label>内容</label>
+          <textarea id="text-content" rows="2" placeholder="输入文字..."></textarea>
+        </div>
+        <div class="prop-group">
+          <label>字体</label>
+          <select id="text-font" class="prop-select">
+            <option value="Arial">Arial</option>
+            <option value="Georgia">Georgia</option>
+            <option value="Times New Roman">Times New Roman</option>
+            <option value="Courier New">Courier New</option>
+            <option value="Verdana">Verdana</option>
+            <option value="Impact">Impact</option>
+            <option value="Comic Sans MS">Comic Sans MS</option>
+            <option value="SimHei">SimHei (黑体)</option>
+            <option value="Microsoft YaHei">Microsoft YaHei (雅黑)</option>
+            <option value="KaiTi">KaiTi (楷体)</option>
+            <option value="FangSong">FangSong (仿宋)</option>
+          </select>
+        </div>
+        <div class="prop-group">
+          <label>字号</label>
+          <div class="prop-row">
+            <input type="number" id="text-size" value="24" min="6" max="200">
+            <span class="prop-label">pt</span>
+          </div>
+        </div>
+        <div class="prop-group">
+          <label>颜色</label>
+          <div class="prop-row">
+            <input type="color" id="text-color" value="#ffffff">
+          </div>
+        </div>
+        <div class="prop-group">
+          <label>样式</label>
+          <div class="prop-row">
+            <button class="prop-toggle" id="btn-text-bold" title="加粗">B</button>
+            <button class="prop-toggle" id="btn-text-italic" title="斜体" style="font-style:italic">I</button>
+            <button class="prop-toggle" id="btn-text-underline" title="下划线" style="text-decoration:underline">U</button>
+          </div>
+        </div>
+        <div class="prop-group">
+          <label>对齐</label>
+          <div class="prop-row">
+            <button class="prop-toggle active" id="btn-align-left" title="左对齐">⬄</button>
+            <button class="prop-toggle" id="btn-align-center" title="居中">≡</button>
+            <button class="prop-toggle" id="btn-align-right" title="右对齐">➡</button>
+          </div>
+        </div>
+        <div class="prop-group">
+          <button class="panel-btn danger" id="btn-delete-text">🗑 删除文字</button>
+        </div>
+      </div>
+
+      <!-- Page Properties -->
+      <div class="prop-section" id="prop-page">
+        <div class="panel-header">📐 页面设置</div>
+        <div class="prop-group">
+          <label>尺寸</label>
+          <select id="page-size-prop" class="prop-select">
+            <option value="A5">A5 (148×210mm)</option>
+            <option value="A4" selected>A4 (210×297mm)</option>
+            <option value="square">方形</option>
+            <option value="custom">自定义</option>
+          </select>
+        </div>
+        <div class="prop-group" id="custom-size-group" style="display:none;">
+          <label>自定义 (px)</label>
+          <div class="prop-row">
+            <span class="prop-label">W</span>
+            <input type="number" id="page-custom-w" value="595" min="200" max="3000">
+            <span class="prop-label">H</span>
+            <input type="number" id="page-custom-h" value="842" min="200" max="3000">
+          </div>
+        </div>
+        <div class="prop-group">
+          <label>背景色</label>
+          <div class="prop-row">
+            <input type="color" id="page-bg-color" value="#ffffff">
+            <button class="prop-btn" id="btn-page-bg-transparent">透明</button>
+          </div>
+        </div>
+        <div class="prop-group">
+          <label>方向</label>
+          <div class="prop-row">
+            <button class="prop-toggle active" id="btn-orient-portrait">纵向</button>
+            <button class="prop-toggle" id="btn-orient-landscape">横向</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Image Library -->
+      <div class="prop-section" id="prop-library">
+        <div class="panel-header">🖼 图片库</div>
+        <div id="image-library-toolbar">
+          <button class="panel-btn" id="btn-import-images">📂 导入图片</button>
+          <button class="panel-btn" id="btn-import-folder">📁 导入文件夹</button>
+        </div>
+        <div id="image-library">
+          <div id="image-thumbnails"></div>
+          <div id="image-drop-zone">
+            <p>拖拽图片到这里</p>
+            <small>支持 JPG, PNG, GIF, WebP, BMP</small>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status Bar -->
+  <div id="status-bar">
+    <span id="status-text">就绪</span>
+    <span id="status-info"></span>
+  </div>
+
+  <script src="src/renderer.js"></script>
+</body>
+</html>
